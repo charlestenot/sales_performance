@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("DATABASE_URL")
+  relationMode = "prisma"
+}
+
+model Owner {
+  id        String   @id
+  email     String?
+  firstName String?
+  lastName  String?
+  fullName  String?
+  archived  Boolean  @default(false)
+  syncedAt  DateTime @default(now())
+
+  deals Deal[]
+}
+
+model Deal {
+  id             String    @id
+  name           String?
+  ownerId        String?
+  pipeline       String?
+  dealStage      String?
+  closeDate      DateTime?
+  createDate     DateTime?
+  hsLastModified DateTime?
+  amount         Float?
+  properties     String
+  syncedAt       DateTime  @default(now())
+
+  owner Owner? @relation(fields: [ownerId], references: [id])
+
+  @@index([ownerId])
+  @@index([closeDate])
+  @@index([dealStage])
+  @@index([pipeline])
+  @@index([hsLastModified])
+}
+
+model SyncRun {
+  id            Int       @id @default(autoincrement())
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  trigger       String
+  status        String
+  dealsFetched  Int       @default(0)
+  dealsTotal    Int?
+  ownersFetched Int       @default(0)
+  errorMessage  String?
+
+  @@index([startedAt])
+}
+
+model AppSetting {
+  key   String @id
+  value String
+}
+
+model SalesRep {
+  id              Int       @id @default(autoincrement())
+  ownerId         String    @unique
+  name            String
+  startDate       DateTime?
+  endDate         DateTime?
+  managerId       Int?
+  teamId          Int?
+  currentRoleId   Int?
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  team        Team?        @relation(fields: [teamId], references: [id])
+  currentRole Role?        @relation("RepCurrentRole", fields: [currentRoleId], references: [id])
+  monthly     RepMonthly[]
+
+  @@index([ownerId])
+  @@index([managerId])
+  @@index([teamId])
+  @@index([currentRoleId])
+}
+
+model Team {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  archived  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reps SalesRep[]
+}
+
+model Dimension {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  attribute String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  buckets DimensionBucket[]
+}
+
+model DimensionBucket {
+  id          Int      @id @default(autoincrement())
+  dimensionId Int
+  name        String
+  values      String   @default("[]")
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  dimension Dimension @relation(fields: [dimensionId], references: [id], onDelete: Cascade)
+
+  @@index([dimensionId])
+}
+
+model RepMonthly {
+  id         Int      @id @default(autoincrement())
+  salesRepId Int
+  month      DateTime
+  roleId     Int?
+  roleName   String?
+  baseQuota  Float?
+  teamId     Int?
+  teamName   String?
+  manager    String?
+  quota      Float?
+  frupPct    Float?
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  rep  SalesRep @relation(fields: [salesRepId], references: [id], onDelete: Cascade)
+  role Role?    @relation(fields: [roleId], references: [id])
+
+  @@index([salesRepId])
+  @@index([month])
+  @@index([roleId])
+  @@index([teamId])
+}
+
+model Role {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  baseQuota Float    @default(0)
+  rampPct   String   @default("[]")
+  sortOrder Int      @default(0)
+  archived  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  monthly     RepMonthly[]
+  currentReps SalesRep[]   @relation("RepCurrentRole")
+}

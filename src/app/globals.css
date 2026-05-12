@@ -2,7 +2,12 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #18181b;
+  --muted: #71717a;
+  --border: #e4e4e7;
+  --border-soft: rgba(228, 228, 231, 0.6);
+  --accent: #3b82f6;
+  --radius: 0.5rem;
 }
 
 @theme inline {
@@ -14,13 +19,100 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
+    --background: #09090b;
     --foreground: #ededed;
+    --muted: #a1a1aa;
+    --border: #27272a;
+    --border-soft: rgba(39, 39, 42, 0.6);
   }
+}
+
+html {
+  font-feature-settings: "cv11", "ss01", "ss03";
+  text-rendering: optimizeLegibility;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.005em;
+}
+
+h1, h2, h3, h4 {
+  letter-spacing: -0.02em;
+}
+
+/* Tighten focus rings — softer than Tailwind's default. */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* react-data-grid glue */
+.rdg-wrapper {
+  --rdg-border-color: var(--border-soft);
+  --rdg-header-background-color: transparent;
+  --rdg-row-hover-background-color: rgba(244, 244, 245, 0.5); /* zinc-100/50 */
+  --rdg-selection-color: var(--accent);
+  width: 100%;
+  background: transparent;
+}
+.rdg-wrapper .rdg {
+  block-size: auto;
+  border: none;
+  font-size: 0.875rem;
+}
+/* Vertical grid lines (Google-Sheets-style). The last column drops its right
+   border so the table flush-aligns with the page edge. */
+.rdg-wrapper .rdg-cell {
+  border-right: 1px solid var(--border-soft);
+}
+.rdg-wrapper .rdg-cell:last-child {
+  border-right: none;
+}
+.rdg-wrapper .rdg-cell-right {
+  text-align: right;
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+.rdg-wrapper .rdg-actions-cell {
+  padding: 0;
+}
+.rdg-wrapper .rdg-actions-cell > div {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  padding: 0 0.75rem;
+}
+/* Tame the sort indicator — RDG ships a big chevron SVG by default. Shrink it
+   and dim it so the header stays readable. */
+.rdg-wrapper .rdg-header-sort-cell {
+  gap: 0.25rem;
+}
+.rdg-wrapper .rdg-sort-arrow,
+.rdg-wrapper .rdg-header-sort-cell svg {
+  width: 10px;
+  height: 10px;
+  opacity: 0.55;
+}
+
+@media (prefers-color-scheme: dark) {
+  .rdg-wrapper {
+    --rdg-row-hover-background-color: rgba(39, 39, 42, 0.5);
+    --rdg-background-color: var(--background);
+    --rdg-color: var(--foreground);
+    background: transparent;
+  }
+}
+
+/* Tabular numbers everywhere they make sense */
+.font-mono,
+[class*="font-mono"] {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
 }

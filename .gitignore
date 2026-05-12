@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# sqlite
+prisma/*.db
+prisma/*.db-journal
+
+# generated prisma client
+src/generated/
+
+# Sensitive scratch data (real employee/customer info — never push)
+scripts/hr_log.tsv
+scripts/*.csv
+scripts/*.tsv
