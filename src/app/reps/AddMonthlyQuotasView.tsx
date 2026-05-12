@@ -168,7 +168,10 @@ export default function AddMonthlyQuotasView({
           startDate: u.startDate,
           roleId,
           roleName: role?.name ?? u.currentRoleName ?? null,
-          manager: ex?.manager ?? u.managerName ?? "",
+          // Use `||` not `??` so an existing entry with manager='' or whitespace
+          // still falls back to the rep's live manager. Several historical
+          // entries have empty-string managers from earlier imports.
+          manager: (ex?.manager?.trim() || u.managerName || "") as string,
           quota: quotaStr,
           frup: frupStr,
           included: true,

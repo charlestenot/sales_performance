@@ -131,7 +131,7 @@ export default function IndividualQuotaView() {
           monthlyId: e?.monthlyId ?? null,
           roleId: e?.roleId ?? rep.currentRoleId ?? null,
           teamId: e?.teamId ?? rep.teamId ?? null,
-          manager: e?.manager ?? rep.managerName ?? "",
+          manager: e?.manager?.trim() || rep.managerName || "",
           quota: e?.quota ?? null,
           frupPct: e?.frupPct ?? null,
           suggestedQuota: null,
@@ -288,7 +288,7 @@ export default function IndividualQuotaView() {
               monthlyId: e?.monthlyId ?? null,
               roleId: e?.roleId ?? rep.currentRoleId ?? null,
               teamId: e?.teamId ?? rep.teamId ?? null,
-              manager: e?.manager ?? rep.managerName ?? "",
+              manager: e?.manager?.trim() || rep.managerName || "",
               quota: e?.quota ?? null,
               frupPct: e?.frupPct ?? null,
               // Keep the previously computed suggestion visible after save.
