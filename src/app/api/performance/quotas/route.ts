@@ -131,7 +131,7 @@ export async function GET(req: Request) {
       "pipeline",
       "dealStage",
       "closeDate",
-      COALESCE(("properties"::jsonb ->> ${amountKey})::numeric, 0)::float8 AS "amount",
+      COALESCE(NULLIF("properties"::jsonb ->> ${amountKey}, '')::numeric, 0)::float8 AS "amount",
       (("properties"::jsonb ->> 'hs_is_closed_won') = 'true') AS "isClosedWon"
     FROM "Deal"
     WHERE "closeDate" >= ${from}
