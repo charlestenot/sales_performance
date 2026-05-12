@@ -1,0 +1,16 @@
+# Same exclusions as .gitignore plus local-only artifacts. The Vercel CLI
+# `vercel deploy` reads this when uploading the source bundle. CI builds via
+# GitHub integration ignore this file (Vercel pulls from the git tree).
+prisma/dev.db
+prisma/*.db
+prisma/*.db-journal
+prisma/migrations.sqlite-bak
+prisma/schema.sqlite.prisma.bak
+node_modules
+.next
+.env
+.env.local
+src/generated/prisma
+scripts/hr_log.tsv
+scripts/*.csv
+scripts/*.tsv
