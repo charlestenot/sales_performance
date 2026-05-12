@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import { Prisma } from "../generated/prisma";
 import { countDeals, iterateDeals, iterateOwners, listDealProperties } from "./hubspot";
 
 const STANDARD_PROPS = [
@@ -101,7 +102,7 @@ export async function runSync(trigger: "manual" | "cron"): Promise<{ runId: numb
       createDate: Date | null;
       hsLastModified: Date | null;
       amount: number | null;
-      properties: string;
+      properties: Prisma.InputJsonValue;
     };
     let buffer: DealUpsertInput[] = [];
 
@@ -139,7 +140,11 @@ export async function runSync(trigger: "manual" | "cron"): Promise<{ runId: numb
         createDate: parseDate(p.createdate),
         hsLastModified,
         amount: parseFloatOrNull(p.amount),
-        properties: JSON.stringify(p),
+        // Stored as JSONB now — Prisma forwards the object straight through.
+        // Cast: Prisma's InputJsonValue rejects fields typed `string | null`
+        // because it treats `null` specially. At runtime null values inside a
+        // jsonb are fine, so the cast is safe.
+        properties: p as unknown as Prisma.InputJsonValue,
       });
       if (hsLastModified && hsLastModified.getTime() > maxSeen) {
         maxSeen = hsLastModified.getTime();

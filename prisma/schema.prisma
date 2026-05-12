@@ -42,7 +42,7 @@ model Deal {
   createDate     DateTime?
   hsLastModified DateTime?
   amount         Float?
-  properties     String
+  properties     Json
   syncedAt       DateTime  @default(now())
 
   owner Owner? @relation(fields: [ownerId], references: [id])

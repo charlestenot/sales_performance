@@ -176,12 +176,8 @@ export async function GET(req: Request) {
 
   const out: Out[] = [];
   for (const d of deals) {
-    let props: Record<string, string | null>;
-    try {
-      props = JSON.parse(d.properties) as Record<string, string | null>;
-    } catch {
-      continue;
-    }
+    // properties is JSONB on Postgres; Prisma surfaces it as a parsed object.
+    const props = (d.properties ?? {}) as Record<string, string | null>;
     if (useMapping) {
       if (!stageSet.has(stageKey(d.pipeline, d.dealStage))) continue;
     } else {
