@@ -107,34 +107,12 @@ export async function GET(req: Request) {
   const stageSet = new Set(selectedStages.map((s) => stageKey(s.pipeline, s.stage)));
   const useMapping = stageSet.size > 0;
 
-  // Paginate the fetch in batches. The Prisma NAPI engine intermittently
-  // fails with "Failed to convert rust String into napi string" when a single
-  // findMany returns a large aggregated payload — Deal rows carry the full
-  // HubSpot `properties` JSON (often 10s of KB each), so a multi-thousand-row
-  // result can hit the conversion limit. Chunking sidesteps the bug entirely.
-  type DealRow = Awaited<ReturnType<typeof prisma.deal.findMany>>[number];
-  const deals: DealRow[] = [];
-  const PAGE = 500;
-  let cursor: string | null = null;
-  for (;;) {
-    const batch: DealRow[] =
-      cursor == null
-        ? await prisma.deal.findMany({
-            where: dealWhere,
-            orderBy: { id: "asc" },
-            take: PAGE,
-          })
-        : await prisma.deal.findMany({
-            where: dealWhere,
-            orderBy: { id: "asc" },
-            take: PAGE,
-            skip: 1,
-            cursor: { id: cursor },
-          });
-    deals.push(...batch);
-    if (batch.length < PAGE) break;
-    cursor = batch[batch.length - 1].id;
-  }
+  // Single fetch — the chunking that lived here was a workaround for a Prisma
+  // NAPI bug specific to SQLite ("Failed to convert rust String into napi
+  // string" on big result sets). Postgres doesn't trip it, and the pagination
+  // was costing ~50+ extra round-trips to Supabase per page load. Restore the
+  // chunking only if a similar Postgres-side issue appears.
+  const deals = await prisma.deal.findMany({ where: dealWhere });
   const actualsByMonth = new Map<string, { sum: number; count: number }>();
   for (const d of deals) {
     let props: Record<string, string | null>;
