@@ -63,12 +63,14 @@ function lastDayOfMonthUTC(d: Date) {
 function isActiveForMonth(u: User, month: Date): boolean {
   if (!u.startDate) return false;
   const start = new Date(u.startDate);
-  const monthStart = month;
   const monthEnd = lastDayOfMonthUTC(month);
   if (start > monthEnd) return false;
+  // Rep must be employed through the END of the month to get a full-month
+  // quota row. Mid-month departures are excluded from the bulk flow — if you
+  // really want a quota for a partial month, use "Add another rep" below.
   if (u.endDate) {
     const end = new Date(u.endDate);
-    if (end < monthStart) return false;
+    if (end < monthEnd) return false;
   }
   return true;
 }
