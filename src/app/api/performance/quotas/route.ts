@@ -107,31 +107,47 @@ export async function GET(req: Request) {
   const stageSet = new Set(selectedStages.map((s) => stageKey(s.pipeline, s.stage)));
   const useMapping = stageSet.size > 0;
 
-  // Single fetch — the chunking that lived here was a workaround for a Prisma
-  // NAPI bug specific to SQLite ("Failed to convert rust String into napi
-  // string" on big result sets). Postgres doesn't trip it, and the pagination
-  // was costing ~50+ extra round-trips to Supabase per page load. Restore the
-  // chunking only if a similar Postgres-side issue appears.
-  const deals = await prisma.deal.findMany({ where: dealWhere });
+  // Fetch ONLY the deal fields we actually iterate over — never the full
+  // properties JSON (~10KB/row). The amount and is_closed_won live inside
+  // properties but we extract them with Postgres' JSONB operators server-side,
+  // turning a multi-hundred-MB payload into a few MB and a 27s endpoint into
+  // a sub-second one. The amount key comes from the user-selected setting,
+  // sanitized to a safe identifier before being interpolated.
+  const amountKey = (amountField ?? "mrr_incremental_at_close_date").replace(/[^a-zA-Z0-9_]/g, "");
+  const ownerIds = ownerIdFilter.length ? ownerIdFilter : ["__none__"];
+  type DealLite = {
+    id: string;
+    ownerId: string | null;
+    pipeline: string | null;
+    dealStage: string | null;
+    closeDate: Date;
+    amount: number | null;
+    isClosedWon: boolean;
+  };
+  const deals = await prisma.$queryRaw<DealLite[]>`
+    SELECT
+      "id",
+      "ownerId",
+      "pipeline",
+      "dealStage",
+      "closeDate",
+      COALESCE(("properties"::jsonb ->> ${amountKey})::numeric, 0)::float8 AS "amount",
+      (("properties"::jsonb ->> 'hs_is_closed_won') = 'true') AS "isClosedWon"
+    FROM "Deal"
+    WHERE "closeDate" >= ${from}
+      AND "closeDate" <= ${lastDayOfMonthUTC(to)}
+      AND "ownerId" = ANY(${ownerIds}::text[])
+  `;
   const actualsByMonth = new Map<string, { sum: number; count: number }>();
   for (const d of deals) {
-    let props: Record<string, string | null>;
-    try {
-      props = JSON.parse(d.properties) as Record<string, string | null>;
-    } catch {
-      continue;
-    }
     if (useMapping) {
       if (!stageSet.has(stageKey(d.pipeline, d.dealStage))) continue;
     } else {
-      if (props.hs_is_closed_won !== "true") continue;
+      if (!d.isClosedWon) continue;
     }
     if (!d.closeDate) continue;
     const key = d.closeDate.toISOString().slice(0, 7);
-    let amountRaw: string | null | undefined;
-    if (amountField) amountRaw = props[amountField];
-    if (amountRaw == null) amountRaw = props.mrr_incremental_at_close_date ?? props.mrr_incremental;
-    const amount = Number(amountRaw ?? 0) || 0;
+    const amount = Number(d.amount ?? 0) || 0;
     const cur = actualsByMonth.get(key) ?? { sum: 0, count: 0 };
     cur.sum += amount;
     cur.count++;
@@ -173,22 +189,13 @@ export async function GET(req: Request) {
   const actualsByOwnerMonth = new Map<string, Map<string, { sum: number; count: number }>>();
   for (const d of deals) {
     if (!d.closeDate || !d.ownerId) continue;
-    let props: Record<string, string | null>;
-    try {
-      props = JSON.parse(d.properties) as Record<string, string | null>;
-    } catch {
-      continue;
-    }
     if (useMapping) {
       if (!stageSet.has(stageKey(d.pipeline, d.dealStage))) continue;
     } else {
-      if (props.hs_is_closed_won !== "true") continue;
+      if (!d.isClosedWon) continue;
     }
     const k = d.closeDate.toISOString().slice(0, 7);
-    let amountRaw: string | null | undefined;
-    if (amountField) amountRaw = props[amountField];
-    if (amountRaw == null) amountRaw = props.mrr_incremental_at_close_date ?? props.mrr_incremental;
-    const amount = Number(amountRaw ?? 0) || 0;
+    const amount = Number(d.amount ?? 0) || 0;
     const inner = actualsByOwnerMonth.get(d.ownerId) ?? new Map();
     const cur = inner.get(k) ?? { sum: 0, count: 0 };
     cur.sum += amount;
@@ -349,16 +356,10 @@ export async function GET(req: Request) {
 
       for (const d of deals) {
         if (!d.closeDate) continue;
-        let props: Record<string, string | null>;
-        try {
-          props = JSON.parse(d.properties) as Record<string, string | null>;
-        } catch {
-          continue;
-        }
         if (useMapping) {
           if (!stageSet.has(stageKey(d.pipeline, d.dealStage))) continue;
         } else {
-          if (props.hs_is_closed_won !== "true") continue;
+          if (!d.isClosedWon) continue;
         }
         let bucketId: number | "__unassigned__" = "__unassigned__";
         if (dim.attribute === "pipeline") {
@@ -393,10 +394,7 @@ export async function GET(req: Request) {
           }
         }
         const k = d.closeDate.toISOString().slice(0, 7);
-        let amountRaw: string | null | undefined;
-        if (amountField) amountRaw = props[amountField];
-        if (amountRaw == null) amountRaw = props.mrr_incremental_at_close_date ?? props.mrr_incremental;
-        const amount = Number(amountRaw ?? 0) || 0;
+        const amount = Number(d.amount ?? 0) || 0;
         const m = ensure(String(bucketId));
         m.set(k, (m.get(k) ?? 0) + amount);
       }
