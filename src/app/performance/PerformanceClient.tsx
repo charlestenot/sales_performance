@@ -11,6 +11,8 @@ type Month = {
   actual: number;
   quotaCount: number;
   dealCount: number;
+  yearlyActual: number;
+  yearlyDealCount: number;
 };
 type UserMonth = { month: string; quota: number; actual: number };
 type UserBreakdown = {
@@ -36,7 +38,14 @@ type DimensionBreakdown = {
 type DimensionLookup = { id: number; name: string; attribute: string };
 type Resp = {
   months: Month[];
-  totals: { quota: number; actual: number; quotaCount: number; dealCount: number };
+  totals: {
+    quota: number;
+    actual: number;
+    quotaCount: number;
+    dealCount: number;
+    yearlyActual: number;
+    yearlyDealCount: number;
+  };
   byUser: UserBreakdown[];
   byDimension: DimensionBreakdown | null;
 };
@@ -315,6 +324,9 @@ export default function PerformanceClient({ mode }: { mode: ViewMode }) {
                 months={data.months}
                 totalQuota={data.totals.quota}
                 totalActual={data.totals.actual}
+                totalDealCount={data.totals.dealCount}
+                totalYearlyDealCount={data.totals.yearlyDealCount}
+                totalYearlyActual={data.totals.yearlyActual}
                 onDrillMonth={(month) =>
                   setDrillDown({
                     month,
@@ -489,11 +501,17 @@ function PerfTable({
   months,
   totalQuota,
   totalActual,
+  totalDealCount,
+  totalYearlyDealCount,
+  totalYearlyActual,
   onDrillMonth,
 }: {
   months: Month[];
   totalQuota: number;
   totalActual: number;
+  totalDealCount: number;
+  totalYearlyDealCount: number;
+  totalYearlyActual: number;
   onDrillMonth?: (month: string) => void;
 }) {
   const totalAttainment = totalQuota > 0 ? totalActual / totalQuota : null;
@@ -547,7 +565,7 @@ function PerfTable({
               {fmtMoneyFull(totalActual)}
             </td>
           </tr>
-          <tr>
+          <tr className="border-b border-zinc-100 dark:border-zinc-800/50">
             <td className="py-2 pr-4 sticky left-0 bg-white dark:bg-zinc-950 z-10 font-medium text-zinc-500">
               Attainment
             </td>
@@ -579,6 +597,65 @@ function PerfTable({
               }`}
             >
               {fmtPct(totalAttainment)}
+            </td>
+          </tr>
+          {/* New: % Yearly Deals — share of closed-won DEALS that have commitment
+              in (Yearly, Multiyears). Denominator is total closed-won deals;
+              deals with null commitment count in the denominator only. */}
+          <tr className="border-b border-zinc-100 dark:border-zinc-800/50">
+            <td className="py-2 pr-4 sticky left-0 bg-white dark:bg-zinc-950 z-10 font-medium text-zinc-500">
+              % Yearly Deals
+            </td>
+            {months.map((m) => {
+              const r = m.dealCount > 0 ? m.yearlyDealCount / m.dealCount : null;
+              return (
+                <td
+                  key={m.month}
+                  className="py-2 px-3 text-right font-mono whitespace-nowrap text-zinc-600 dark:text-zinc-300"
+                  title={
+                    m.dealCount > 0
+                      ? `${m.yearlyDealCount} of ${m.dealCount} deals are Yearly or Multiyears`
+                      : undefined
+                  }
+                >
+                  {fmtPct(r)}
+                </td>
+              );
+            })}
+            <td
+              className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold text-zinc-700 dark:text-zinc-200"
+              title={`${totalYearlyDealCount} of ${totalDealCount} deals are Yearly or Multiyears`}
+            >
+              {fmtPct(totalDealCount > 0 ? totalYearlyDealCount / totalDealCount : null)}
+            </td>
+          </tr>
+          {/* New: % Yearly ARR — share of MRR coming from Yearly/Multiyears
+              deals. Same denominator logic as % Yearly Deals. */}
+          <tr>
+            <td className="py-2 pr-4 sticky left-0 bg-white dark:bg-zinc-950 z-10 font-medium text-zinc-500">
+              % Yearly ARR
+            </td>
+            {months.map((m) => {
+              const r = m.actual > 0 ? m.yearlyActual / m.actual : null;
+              return (
+                <td
+                  key={m.month}
+                  className="py-2 px-3 text-right font-mono whitespace-nowrap text-zinc-600 dark:text-zinc-300"
+                  title={
+                    m.actual > 0
+                      ? `${fmtMoneyFull(m.yearlyActual)} of ${fmtMoneyFull(m.actual)} MRR is Yearly/Multiyears`
+                      : undefined
+                  }
+                >
+                  {fmtPct(r)}
+                </td>
+              );
+            })}
+            <td
+              className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold text-zinc-700 dark:text-zinc-200"
+              title={`${fmtMoneyFull(totalYearlyActual)} of ${fmtMoneyFull(totalActual)} MRR is Yearly/Multiyears`}
+            >
+              {fmtPct(totalActual > 0 ? totalYearlyActual / totalActual : null)}
             </td>
           </tr>
         </tbody>

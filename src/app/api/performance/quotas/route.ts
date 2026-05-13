@@ -123,6 +123,7 @@ export async function GET(req: Request) {
     closeDate: Date;
     amount: number | null;
     isClosedWon: boolean;
+    isYearly: boolean;
   };
   const deals = await prisma.$queryRaw<DealLite[]>`
     SELECT
@@ -132,13 +133,17 @@ export async function GET(req: Request) {
       "dealStage",
       "closeDate",
       COALESCE(NULLIF("properties" ->> ${amountKey}, '')::numeric, 0)::float8 AS "amount",
-      (("properties" ->> 'hs_is_closed_won') = 'true') AS "isClosedWon"
+      (("properties" ->> 'hs_is_closed_won') = 'true') AS "isClosedWon",
+      (("properties" ->> 'commitment') IN ('Yearly', 'Multiyears')) AS "isYearly"
     FROM "Deal"
     WHERE "closeDate" >= ${from}
       AND "closeDate" <= ${lastDayOfMonthUTC(to)}
       AND "ownerId" = ANY(${ownerIds}::text[])
   `;
-  const actualsByMonth = new Map<string, { sum: number; count: number }>();
+  const actualsByMonth = new Map<
+    string,
+    { sum: number; count: number; yearlySum: number; yearlyCount: number }
+  >();
   for (const d of deals) {
     if (useMapping) {
       if (!stageSet.has(stageKey(d.pipeline, d.dealStage))) continue;
@@ -148,19 +153,44 @@ export async function GET(req: Request) {
     if (!d.closeDate) continue;
     const key = d.closeDate.toISOString().slice(0, 7);
     const amount = Number(d.amount ?? 0) || 0;
-    const cur = actualsByMonth.get(key) ?? { sum: 0, count: 0 };
+    const cur = actualsByMonth.get(key) ?? {
+      sum: 0,
+      count: 0,
+      yearlySum: 0,
+      yearlyCount: 0,
+    };
     cur.sum += amount;
     cur.count++;
+    if (d.isYearly) {
+      cur.yearlySum += amount;
+      cur.yearlyCount++;
+    }
     actualsByMonth.set(key, cur);
   }
 
   // ---- Stitch the full month sequence so the table axis is consistent ----
-  const months: { month: string; quota: number; actual: number; quotaCount: number; dealCount: number }[] = [];
+  const months: {
+    month: string;
+    quota: number;
+    actual: number;
+    quotaCount: number;
+    dealCount: number;
+    yearlyActual: number;
+    yearlyDealCount: number;
+  }[] = [];
   for (const m of iterateMonths(from, to)) {
     const key = m.toISOString().slice(0, 7);
     const q = quotaByMonth.get(key) ?? { sum: 0, count: 0 };
-    const a = actualsByMonth.get(key) ?? { sum: 0, count: 0 };
-    months.push({ month: key, quota: q.sum, actual: a.sum, quotaCount: q.count, dealCount: a.count });
+    const a = actualsByMonth.get(key) ?? { sum: 0, count: 0, yearlySum: 0, yearlyCount: 0 };
+    months.push({
+      month: key,
+      quota: q.sum,
+      actual: a.sum,
+      quotaCount: q.count,
+      dealCount: a.count,
+      yearlyActual: a.yearlySum,
+      yearlyDealCount: a.yearlyCount,
+    });
   }
 
   const totals = months.reduce(
@@ -169,8 +199,10 @@ export async function GET(req: Request) {
       actual: t.actual + m.actual,
       quotaCount: t.quotaCount + m.quotaCount,
       dealCount: t.dealCount + m.dealCount,
+      yearlyActual: t.yearlyActual + m.yearlyActual,
+      yearlyDealCount: t.yearlyDealCount + m.yearlyDealCount,
     }),
-    { quota: 0, actual: 0, quotaCount: 0, dealCount: 0 }
+    { quota: 0, actual: 0, quotaCount: 0, dealCount: 0, yearlyActual: 0, yearlyDealCount: 0 }
   );
 
   // ---- Per-user breakdown for the "By User" view ----
