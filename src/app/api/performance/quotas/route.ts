@@ -218,7 +218,8 @@ export async function GET(req: Request) {
     quotasByRepMonth.set(e.salesRepId, inner);
   }
 
-  const actualsByOwnerMonth = new Map<string, Map<string, { sum: number; count: number }>>();
+  type ActualCell = { sum: number; count: number; yearlySum: number; yearlyCount: number };
+  const actualsByOwnerMonth = new Map<string, Map<string, ActualCell>>();
   for (const d of deals) {
     if (!d.closeDate || !d.ownerId) continue;
     if (useMapping) {
@@ -228,10 +229,14 @@ export async function GET(req: Request) {
     }
     const k = d.closeDate.toISOString().slice(0, 7);
     const amount = Number(d.amount ?? 0) || 0;
-    const inner = actualsByOwnerMonth.get(d.ownerId) ?? new Map();
-    const cur = inner.get(k) ?? { sum: 0, count: 0 };
+    const inner = actualsByOwnerMonth.get(d.ownerId) ?? new Map<string, ActualCell>();
+    const cur = inner.get(k) ?? { sum: 0, count: 0, yearlySum: 0, yearlyCount: 0 };
     cur.sum += amount;
     cur.count++;
+    if (d.isYearly) {
+      cur.yearlySum += amount;
+      cur.yearlyCount++;
+    }
     inner.set(k, cur);
     actualsByOwnerMonth.set(d.ownerId, inner);
   }
@@ -249,12 +254,25 @@ export async function GET(req: Request) {
     const aMap = actualsByOwnerMonth.get(r.ownerId);
     const userMonths = months.map((m) => {
       const q = qMap?.get(m.month) ?? { sum: 0, count: 0 };
-      const a = aMap?.get(m.month) ?? { sum: 0, count: 0 };
-      return { month: m.month, quota: q.sum, actual: a.sum };
+      const a = aMap?.get(m.month) ?? { sum: 0, count: 0, yearlySum: 0, yearlyCount: 0 };
+      return {
+        month: m.month,
+        quota: q.sum,
+        actual: a.sum,
+        dealCount: a.count,
+        yearlyActual: a.yearlySum,
+        yearlyDealCount: a.yearlyCount,
+      };
     });
     const userTotals = userMonths.reduce(
-      (t, m) => ({ quota: t.quota + m.quota, actual: t.actual + m.actual }),
-      { quota: 0, actual: 0 }
+      (t, m) => ({
+        quota: t.quota + m.quota,
+        actual: t.actual + m.actual,
+        dealCount: t.dealCount + m.dealCount,
+        yearlyActual: t.yearlyActual + m.yearlyActual,
+        yearlyDealCount: t.yearlyDealCount + m.yearlyDealCount,
+      }),
+      { quota: 0, actual: 0, dealCount: 0, yearlyActual: 0, yearlyDealCount: 0 }
     );
     return {
       id: r.id,

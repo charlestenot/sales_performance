@@ -14,13 +14,26 @@ type Month = {
   yearlyActual: number;
   yearlyDealCount: number;
 };
-type UserMonth = { month: string; quota: number; actual: number };
+type UserMonth = {
+  month: string;
+  quota: number;
+  actual: number;
+  dealCount: number;
+  yearlyActual: number;
+  yearlyDealCount: number;
+};
 type UserBreakdown = {
   id: number;
   name: string;
   ownerId: string;
   months: UserMonth[];
-  totals: { quota: number; actual: number };
+  totals: {
+    quota: number;
+    actual: number;
+    dealCount: number;
+    yearlyActual: number;
+    yearlyDealCount: number;
+  };
 };
 type DimensionBucketRow = {
   id: number | "__unassigned__";
@@ -664,7 +677,28 @@ function PerfTable({
   );
 }
 
-type IndividualMetric = "actuals" | "quotas" | "attainment";
+type IndividualMetric =
+  | "actuals"
+  | "quotas"
+  | "attainment"
+  | "yearlyDeals"
+  | "yearlyARR";
+
+const METRIC_LABEL: Record<IndividualMetric, string> = {
+  actuals: "Actuals",
+  quotas: "Quotas",
+  attainment: "Attainment",
+  yearlyDeals: "% Yearly Deals",
+  yearlyARR: "% Yearly ARR",
+};
+// Fixed display order for the per-user metric rows (and tfoot totals).
+const METRIC_ORDER: IndividualMetric[] = [
+  "actuals",
+  "quotas",
+  "attainment",
+  "yearlyDeals",
+  "yearlyARR",
+];
 
 function ByUserTable({
   months,
@@ -678,10 +712,20 @@ function ByUserTable({
   // Which metric rows to render per user. Persisted across page loads so
   // returning to Individual remembers your last choice. Guard against an
   // empty selection (always keep at least one).
-  const STORAGE_KEY = "perf:byUser:metrics";
-  const ALL: IndividualMetric[] = ["actuals", "quotas", "attainment"];
+  // Bumped key to v2 — the metric set grew, old persisted arrays are still
+  // valid (filtered to known values) but the rename makes intent clear.
+  const STORAGE_KEY = "perf:byUser:metrics:v2";
+  const ALL: IndividualMetric[] = [
+    "actuals",
+    "quotas",
+    "attainment",
+    "yearlyDeals",
+    "yearlyARR",
+  ];
   const [visible, setVisible] = useState<Set<IndividualMetric>>(() => {
-    if (typeof window === "undefined") return new Set(ALL);
+    // Default: the original 3 metrics on, the two Yearly metrics off.
+    const DEFAULT: IndividualMetric[] = ["actuals", "quotas", "attainment"];
+    if (typeof window === "undefined") return new Set(DEFAULT);
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -690,7 +734,7 @@ function ByUserTable({
         if (allowed.length > 0) return new Set(allowed);
       }
     } catch {}
-    return new Set(ALL);
+    return new Set(DEFAULT);
   });
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -722,15 +766,18 @@ function ByUserTable({
     month: m.month,
     actual: sorted.reduce((t, u) => t + (u.months[i]?.actual ?? 0), 0),
     quota: sorted.reduce((t, u) => t + (u.months[i]?.quota ?? 0), 0),
+    dealCount: sorted.reduce((t, u) => t + (u.months[i]?.dealCount ?? 0), 0),
+    yearlyActual: sorted.reduce((t, u) => t + (u.months[i]?.yearlyActual ?? 0), 0),
+    yearlyDealCount: sorted.reduce((t, u) => t + (u.months[i]?.yearlyDealCount ?? 0), 0),
   }));
   const grandActual = sorted.reduce((t, u) => t + u.totals.actual, 0);
   const grandQuota = sorted.reduce((t, u) => t + u.totals.quota, 0);
+  const grandDealCount = sorted.reduce((t, u) => t + u.totals.dealCount, 0);
+  const grandYearlyActual = sorted.reduce((t, u) => t + u.totals.yearlyActual, 0);
+  const grandYearlyDealCount = sorted.reduce((t, u) => t + u.totals.yearlyDealCount, 0);
 
-  const showActuals = visible.has("actuals");
-  const showQuotas = visible.has("quotas");
-  const showAttainment = visible.has("attainment");
-  // Single-metric mode: collapse the per-user 3-row block into 1 row and drop
-  // the "Metric" label column so the table reads cleanly.
+  // Single-metric mode: collapse the per-user block into 1 row and drop the
+  // "Metric" label column so the table reads cleanly.
   const singleMetric = visible.size === 1;
 
   return (
@@ -739,7 +786,6 @@ function ByUserTable({
         <span className="text-zinc-500">Show:</span>
         {ALL.map((m) => {
           const on = visible.has(m);
-          const label = m === "actuals" ? "Actuals" : m === "quotas" ? "Quotas" : "Attainment";
           return (
             <button
               key={m}
@@ -750,7 +796,7 @@ function ByUserTable({
                   : "border-zinc-300 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
               }`}
             >
-              {label}
+              {METRIC_LABEL[m]}
             </button>
           );
         })}
@@ -786,18 +832,14 @@ function ByUserTable({
               </tr>
             ) : (
               sorted.map((u, ui) => {
-                const totalAtt = u.totals.quota > 0 ? u.totals.actual / u.totals.quota : null;
                 const groupBorder = ui === 0 ? "" : "border-t-2 border-zinc-200 dark:border-zinc-800";
                 return (
                   <UserBlock
                     key={u.id}
                     user={u}
                     groupBorder={groupBorder}
-                    totalAtt={totalAtt}
+                    visibleMetrics={visible}
                     onDrillMonth={onDrillMonth}
-                    showActuals={showActuals}
-                    showQuotas={showQuotas}
-                    showAttainment={showAttainment}
                   />
                 );
               })
@@ -805,61 +847,84 @@ function ByUserTable({
           </tbody>
         {sorted.length > 0 && (
           <tfoot>
-            {showActuals && (
-              <tr className="border-t-2 border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40">
-                <td className="py-2 pr-4 sticky left-0 bg-zinc-50 dark:bg-zinc-900/40 z-10 font-semibold" colSpan={singleMetric ? 1 : 2}>
-                  {singleMetric ? "Total" : "Total — Actuals"}
-                </td>
-                {monthTotals.map((m) => (
-                  <td key={m.month} className="py-2 px-3 text-right font-mono whitespace-nowrap font-semibold">
-                    {m.actual > 0 ? fmtMoneyFull(m.actual) : <span className="text-zinc-400">—</span>}
-                  </td>
-                ))}
-                <td className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-bold">
-                  {fmtMoneyFull(grandActual)}
-                </td>
-              </tr>
-            )}
-            {showQuotas && (
-              <tr className={`bg-zinc-50 dark:bg-zinc-900/40 ${!showActuals ? "border-t-2 border-zinc-300 dark:border-zinc-700" : ""}`}>
-                <td className="py-2 pr-4 sticky left-0 bg-zinc-50 dark:bg-zinc-900/40 z-10 font-semibold" colSpan={singleMetric ? 1 : 2}>
-                  {singleMetric ? "Total" : "Total — Quotas"}
-                </td>
-                {monthTotals.map((m) => (
-                  <td key={m.month} className="py-2 px-3 text-right font-mono whitespace-nowrap font-semibold">
-                    {m.quota > 0 ? fmtMoneyFull(m.quota) : <span className="text-zinc-400">—</span>}
-                  </td>
-                ))}
-                <td className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-bold">
-                  {fmtMoneyFull(grandQuota)}
-                </td>
-              </tr>
-            )}
-            {showAttainment && (
-              <tr className={`bg-zinc-50 dark:bg-zinc-900/40 ${!showActuals && !showQuotas ? "border-t-2 border-zinc-300 dark:border-zinc-700" : ""}`}>
-                <td className="py-2 pr-4 sticky left-0 bg-zinc-50 dark:bg-zinc-900/40 z-10 font-semibold" colSpan={singleMetric ? 1 : 2}>
-                  {singleMetric ? "Total" : "Total — Attainment"}
-                </td>
-                {monthTotals.map((m) => {
-                  const a = m.quota > 0 ? m.actual / m.quota : null;
-                  return (
-                    <td
-                      key={m.month}
-                      className={`py-2 px-3 text-right font-mono whitespace-nowrap font-semibold ${attainmentClass(a)}`}
-                    >
-                      {fmtPct(a)}
-                    </td>
-                  );
-                })}
-                <td
-                  className={`py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-bold ${attainmentClass(
-                    grandQuota > 0 ? grandActual / grandQuota : null
-                  )}`}
+            {METRIC_ORDER.filter((m) => visible.has(m)).map((metric, idx) => {
+              const firstRow = idx === 0;
+              const labelCls =
+                "py-2 pr-4 sticky left-0 bg-zinc-50 dark:bg-zinc-900/40 z-10 font-semibold";
+              const cellBase =
+                "py-2 px-3 text-right font-mono whitespace-nowrap font-semibold";
+              const totalBase =
+                "py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-bold";
+              return (
+                <tr
+                  key={metric}
+                  className={`bg-zinc-50 dark:bg-zinc-900/40 ${
+                    firstRow ? "border-t-2 border-zinc-300 dark:border-zinc-700" : ""
+                  }`}
                 >
-                  {fmtPct(grandQuota > 0 ? grandActual / grandQuota : null)}
-                </td>
-              </tr>
-            )}
+                  <td className={labelCls} colSpan={singleMetric ? 1 : 2}>
+                    {singleMetric ? "Total" : `Total — ${METRIC_LABEL[metric]}`}
+                  </td>
+                  {monthTotals.map((m) => {
+                    if (metric === "actuals")
+                      return (
+                        <td key={m.month} className={cellBase}>
+                          {m.actual > 0 ? fmtMoneyFull(m.actual) : <span className="text-zinc-400">—</span>}
+                        </td>
+                      );
+                    if (metric === "quotas")
+                      return (
+                        <td key={m.month} className={cellBase}>
+                          {m.quota > 0 ? fmtMoneyFull(m.quota) : <span className="text-zinc-400">—</span>}
+                        </td>
+                      );
+                    if (metric === "attainment") {
+                      const a = m.quota > 0 ? m.actual / m.quota : null;
+                      return (
+                        <td key={m.month} className={`${cellBase} ${attainmentClass(a)}`}>
+                          {fmtPct(a)}
+                        </td>
+                      );
+                    }
+                    if (metric === "yearlyDeals") {
+                      const r = m.dealCount > 0 ? m.yearlyDealCount / m.dealCount : null;
+                      return (
+                        <td key={m.month} className={`${cellBase} text-zinc-600 dark:text-zinc-300`}>
+                          {fmtPct(r)}
+                        </td>
+                      );
+                    }
+                    // yearlyARR
+                    const r = m.actual > 0 ? m.yearlyActual / m.actual : null;
+                    return (
+                      <td key={m.month} className={`${cellBase} text-zinc-600 dark:text-zinc-300`}>
+                        {fmtPct(r)}
+                      </td>
+                    );
+                  })}
+                  {(() => {
+                    if (metric === "actuals")
+                      return <td className={totalBase}>{fmtMoneyFull(grandActual)}</td>;
+                    if (metric === "quotas")
+                      return <td className={totalBase}>{fmtMoneyFull(grandQuota)}</td>;
+                    if (metric === "attainment") {
+                      const a = grandQuota > 0 ? grandActual / grandQuota : null;
+                      return <td className={`${totalBase} ${attainmentClass(a)}`}>{fmtPct(a)}</td>;
+                    }
+                    if (metric === "yearlyDeals") {
+                      const r = grandDealCount > 0 ? grandYearlyDealCount / grandDealCount : null;
+                      return (
+                        <td className={`${totalBase} text-zinc-700 dark:text-zinc-200`}>{fmtPct(r)}</td>
+                      );
+                    }
+                    const r = grandActual > 0 ? grandYearlyActual / grandActual : null;
+                    return (
+                      <td className={`${totalBase} text-zinc-700 dark:text-zinc-200`}>{fmtPct(r)}</td>
+                    );
+                  })()}
+                </tr>
+              );
+            })}
           </tfoot>
         )}
         </table>
@@ -871,108 +936,156 @@ function ByUserTable({
 function UserBlock({
   user,
   groupBorder,
-  totalAtt,
+  visibleMetrics,
   onDrillMonth,
-  showActuals,
-  showQuotas,
-  showAttainment,
 }: {
   user: UserBreakdown;
   groupBorder: string;
-  totalAtt: number | null;
+  visibleMetrics: Set<IndividualMetric>;
   onDrillMonth?: (month: string, user: { id: number; name: string }) => void;
-  showActuals: boolean;
-  showQuotas: boolean;
-  showAttainment: boolean;
 }) {
   const labelCellClass =
     "py-2 pr-4 sticky left-0 bg-white dark:bg-zinc-950 z-10 whitespace-nowrap font-medium";
-  const rowCount = (showActuals ? 1 : 0) + (showQuotas ? 1 : 0) + (showAttainment ? 1 : 0);
+  const rows = METRIC_ORDER.filter((m) => visibleMetrics.has(m));
+  const rowCount = rows.length;
   const singleMetric = rowCount === 1;
-  // The rep-name cell anchors the first visible row via rowSpan; collapse to
-  // a single row when only one metric is showing (no need for the Metric col).
-  let nameCellPlaced = false;
-  const placeName = () => {
-    if (nameCellPlaced) return null;
-    nameCellPlaced = true;
-    return (
-      <td rowSpan={rowCount} className={labelCellClass}>
-        {user.name}
-      </td>
-    );
-  };
+  const totalAtt = user.totals.quota > 0 ? user.totals.actual / user.totals.quota : null;
+  const cellBase = "py-2 px-3 text-right font-mono whitespace-nowrap";
+  const totalBase =
+    "py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold";
+  const dash = <span className="text-zinc-400">—</span>;
 
   return (
     <>
-      {showActuals && (
-        <tr className={`border-b border-zinc-100 dark:border-zinc-800/50 ${groupBorder}`}>
-          {placeName()}
-          {!singleMetric && (
-            <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">Actuals</td>
-          )}
-          {user.months.map((m) => {
-            const clickable = onDrillMonth && m.actual > 0;
-            return (
-              <td
-                key={m.month}
-                onClick={clickable ? () => onDrillMonth(m.month, { id: user.id, name: user.name }) : undefined}
-                className={`py-2 px-3 text-right font-mono whitespace-nowrap ${
-                  clickable
-                    ? "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:underline decoration-dotted"
-                    : ""
-                }`}
-              >
-                {m.actual > 0 ? fmtMoneyFull(m.actual) : <span className="text-zinc-400">—</span>}
-              </td>
-            );
-          })}
-          <td className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold">
-            {user.totals.actual > 0 ? fmtMoneyFull(user.totals.actual) : <span className="text-zinc-400">—</span>}
-          </td>
-        </tr>
-      )}
-      {showQuotas && (
-        <tr className={`border-b border-zinc-100 dark:border-zinc-800/50 ${!showActuals ? groupBorder : ""}`}>
-          {placeName()}
-          {!singleMetric && (
-            <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">Quotas</td>
-          )}
-          {user.months.map((m) => (
-            <td key={m.month} className="py-2 px-3 text-right font-mono whitespace-nowrap">
-              {m.quota > 0 ? fmtMoneyFull(m.quota) : <span className="text-zinc-400">—</span>}
-            </td>
-          ))}
-          <td className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold">
-            {user.totals.quota > 0 ? fmtMoneyFull(user.totals.quota) : <span className="text-zinc-400">—</span>}
-          </td>
-        </tr>
-      )}
-      {showAttainment && (
-        <tr className={`border-b border-zinc-100 dark:border-zinc-800/50 ${!showActuals && !showQuotas ? groupBorder : ""}`}>
-          {placeName()}
-          {!singleMetric && (
-            <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">Attainment</td>
-          )}
-          {user.months.map((m) => {
-            const a = m.quota > 0 ? m.actual / m.quota : null;
-            return (
-              <td
-                key={m.month}
-                className={`py-2 px-3 text-right font-mono whitespace-nowrap ${attainmentClass(a)}`}
-              >
-                {fmtPct(a)}
-              </td>
-            );
-          })}
-          <td
-            className={`py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold ${attainmentClass(
-              totalAtt
-            )}`}
+      {rows.map((metric, idx) => {
+        const firstRow = idx === 0;
+        return (
+          <tr
+            key={metric}
+            className={`border-b border-zinc-100 dark:border-zinc-800/50 ${
+              firstRow ? groupBorder : ""
+            }`}
           >
-            {fmtPct(totalAtt)}
-          </td>
-        </tr>
-      )}
+            {firstRow && (
+              <td rowSpan={rowCount} className={labelCellClass}>
+                {user.name}
+              </td>
+            )}
+            {!singleMetric && (
+              <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
+                {METRIC_LABEL[metric]}
+              </td>
+            )}
+            {user.months.map((m) => {
+              if (metric === "actuals") {
+                const clickable = onDrillMonth && m.actual > 0;
+                return (
+                  <td
+                    key={m.month}
+                    onClick={
+                      clickable
+                        ? () => onDrillMonth!(m.month, { id: user.id, name: user.name })
+                        : undefined
+                    }
+                    className={`${cellBase} ${
+                      clickable
+                        ? "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:underline decoration-dotted"
+                        : ""
+                    }`}
+                  >
+                    {m.actual > 0 ? fmtMoneyFull(m.actual) : dash}
+                  </td>
+                );
+              }
+              if (metric === "quotas")
+                return (
+                  <td key={m.month} className={cellBase}>
+                    {m.quota > 0 ? fmtMoneyFull(m.quota) : dash}
+                  </td>
+                );
+              if (metric === "attainment") {
+                const a = m.quota > 0 ? m.actual / m.quota : null;
+                return (
+                  <td key={m.month} className={`${cellBase} ${attainmentClass(a)}`}>
+                    {fmtPct(a)}
+                  </td>
+                );
+              }
+              if (metric === "yearlyDeals") {
+                const r = m.dealCount > 0 ? m.yearlyDealCount / m.dealCount : null;
+                return (
+                  <td
+                    key={m.month}
+                    className={`${cellBase} text-zinc-600 dark:text-zinc-300`}
+                    title={
+                      m.dealCount > 0
+                        ? `${m.yearlyDealCount} of ${m.dealCount} deals Yearly/Multiyears`
+                        : undefined
+                    }
+                  >
+                    {fmtPct(r)}
+                  </td>
+                );
+              }
+              // yearlyARR
+              const r = m.actual > 0 ? m.yearlyActual / m.actual : null;
+              return (
+                <td
+                  key={m.month}
+                  className={`${cellBase} text-zinc-600 dark:text-zinc-300`}
+                  title={
+                    m.actual > 0
+                      ? `${fmtMoneyFull(m.yearlyActual)} of ${fmtMoneyFull(m.actual)} MRR`
+                      : undefined
+                  }
+                >
+                  {fmtPct(r)}
+                </td>
+              );
+            })}
+            {(() => {
+              if (metric === "actuals")
+                return (
+                  <td className={totalBase}>
+                    {user.totals.actual > 0 ? fmtMoneyFull(user.totals.actual) : dash}
+                  </td>
+                );
+              if (metric === "quotas")
+                return (
+                  <td className={totalBase}>
+                    {user.totals.quota > 0 ? fmtMoneyFull(user.totals.quota) : dash}
+                  </td>
+                );
+              if (metric === "attainment")
+                return (
+                  <td className={`${totalBase} ${attainmentClass(totalAtt)}`}>
+                    {fmtPct(totalAtt)}
+                  </td>
+                );
+              if (metric === "yearlyDeals") {
+                const r =
+                  user.totals.dealCount > 0
+                    ? user.totals.yearlyDealCount / user.totals.dealCount
+                    : null;
+                return (
+                  <td className={`${totalBase} text-zinc-700 dark:text-zinc-200`}>
+                    {fmtPct(r)}
+                  </td>
+                );
+              }
+              const r =
+                user.totals.actual > 0
+                  ? user.totals.yearlyActual / user.totals.actual
+                  : null;
+              return (
+                <td className={`${totalBase} text-zinc-700 dark:text-zinc-200`}>
+                  {fmtPct(r)}
+                </td>
+              );
+            })()}
+          </tr>
+        );
+      })}
     </>
   );
 }
