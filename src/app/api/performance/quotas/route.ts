@@ -293,8 +293,21 @@ export async function GET(req: Request) {
     buckets: {
       id: number | "__unassigned__";
       name: string;
-      months: { month: string; actual: number; quota: number }[];
-      totals: { actual: number; quota: number };
+      months: {
+        month: string;
+        actual: number;
+        quota: number;
+        dealCount: number;
+        yearlyActual: number;
+        yearlyDealCount: number;
+      }[];
+      totals: {
+        actual: number;
+        quota: number;
+        dealCount: number;
+        yearlyActual: number;
+        yearlyDealCount: number;
+      };
     }[];
   } | null = null;
 
@@ -394,11 +407,17 @@ export async function GET(req: Request) {
         return repIdToTeamId.get(repId) ?? null;
       };
 
-      const bucketAggs = new Map<string, Map<string, number>>();
+      type BucketCell = {
+        sum: number;
+        count: number;
+        yearlySum: number;
+        yearlyCount: number;
+      };
+      const bucketAggs = new Map<string, Map<string, BucketCell>>();
       const ensure = (key: string) => {
         let m = bucketAggs.get(key);
         if (!m) {
-          m = new Map();
+          m = new Map<string, BucketCell>();
           bucketAggs.set(key, m);
         }
         return m;
@@ -446,7 +465,14 @@ export async function GET(req: Request) {
         const k = d.closeDate.toISOString().slice(0, 7);
         const amount = Number(d.amount ?? 0) || 0;
         const m = ensure(String(bucketId));
-        m.set(k, (m.get(k) ?? 0) + amount);
+        const cur = m.get(k) ?? { sum: 0, count: 0, yearlySum: 0, yearlyCount: 0 };
+        cur.sum += amount;
+        cur.count++;
+        if (d.isYearly) {
+          cur.yearlySum += amount;
+          cur.yearlyCount++;
+        }
+        m.set(k, cur);
       }
 
       // Quotas-per-bucket only make sense when the dimension splits the rep
@@ -487,18 +513,30 @@ export async function GET(req: Request) {
       ) => {
         const aInner = bucketAggs.get(String(id));
         const qInner = quotaByBucketMonth.get(String(id));
-        const monthsArr = months.map((mm) => ({
-          month: mm.month,
-          actual: aInner?.get(mm.month) ?? 0,
-          quota: qInner?.get(mm.month) ?? 0,
-        }));
+        const monthsArr = months.map((mm) => {
+          const cell = aInner?.get(mm.month);
+          return {
+            month: mm.month,
+            actual: cell?.sum ?? 0,
+            quota: qInner?.get(mm.month) ?? 0,
+            dealCount: cell?.count ?? 0,
+            yearlyActual: cell?.yearlySum ?? 0,
+            yearlyDealCount: cell?.yearlyCount ?? 0,
+          };
+        });
         return {
           id,
           name,
           months: monthsArr,
           totals: monthsArr.reduce(
-            (t, m) => ({ actual: t.actual + m.actual, quota: t.quota + m.quota }),
-            { actual: 0, quota: 0 }
+            (t, m) => ({
+              actual: t.actual + m.actual,
+              quota: t.quota + m.quota,
+              dealCount: t.dealCount + m.dealCount,
+              yearlyActual: t.yearlyActual + m.yearlyActual,
+              yearlyDealCount: t.yearlyDealCount + m.yearlyDealCount,
+            }),
+            { actual: 0, quota: 0, dealCount: 0, yearlyActual: 0, yearlyDealCount: 0 }
           ),
         };
       };

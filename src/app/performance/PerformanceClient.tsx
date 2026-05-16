@@ -38,8 +38,21 @@ type UserBreakdown = {
 type DimensionBucketRow = {
   id: number | "__unassigned__";
   name: string;
-  months: { month: string; actual: number; quota: number }[];
-  totals: { actual: number; quota: number };
+  months: {
+    month: string;
+    actual: number;
+    quota: number;
+    dealCount: number;
+    yearlyActual: number;
+    yearlyDealCount: number;
+  }[];
+  totals: {
+    actual: number;
+    quota: number;
+    dealCount: number;
+    yearlyActual: number;
+    yearlyDealCount: number;
+  };
 };
 type DimensionBreakdown = {
   dimensionId: number;
@@ -1102,119 +1115,206 @@ function ByDimensionTable({
     bucket: { id: number | "__unassigned__"; name: string }
   ) => void;
 }) {
+  // Metric toggle pills, same model as Individual. For pipeline/stage
+  // dimensions, Quotas and Attainment aren't meaningful — filtered out below.
+  const STORAGE_KEY = "perf:byDim:metrics:v1";
+  const AVAILABLE: IndividualMetric[] = METRIC_ORDER.filter((m) => {
+    if (m === "quotas" || m === "attainment") return dim.quotasAvailable;
+    return true;
+  });
+  const [visible, setVisible] = useState<Set<IndividualMetric>>(() => {
+    const DEFAULT = AVAILABLE.filter((m) => m === "actuals" || m === "quotas" || m === "attainment");
+    if (typeof window === "undefined") return new Set(DEFAULT);
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw) as IndividualMetric[];
+        const allowed = arr.filter((m) => AVAILABLE.includes(m));
+        if (allowed.length > 0) return new Set(allowed);
+      }
+    } catch {}
+    return new Set(DEFAULT);
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...visible]));
+    } catch {}
+  }, [visible]);
+  function toggle(m: IndividualMetric) {
+    setVisible((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) {
+        if (next.size === 1) return prev;
+        next.delete(m);
+      } else {
+        next.add(m);
+      }
+      return next;
+    });
+  }
+
   // Sort buckets by total actual desc, Unassigned always last for visibility.
   const real = dim.buckets.filter((b) => b.id !== "__unassigned__");
   const unassigned = dim.buckets.find((b) => b.id === "__unassigned__") ?? null;
-  real.sort((a, b) => totalsOf(b).actual - totalsOf(a).actual);
+  real.sort((a, b) => b.totals.actual - a.totals.actual);
   const ordered = unassigned ? [...real, unassigned] : real;
 
   const monthTotals = months.map((m, i) => ({
     month: m.month,
     actual: ordered.reduce((t, b) => t + (b.months[i]?.actual ?? 0), 0),
     quota: ordered.reduce((t, b) => t + (b.months[i]?.quota ?? 0), 0),
+    dealCount: ordered.reduce((t, b) => t + (b.months[i]?.dealCount ?? 0), 0),
+    yearlyActual: ordered.reduce((t, b) => t + (b.months[i]?.yearlyActual ?? 0), 0),
+    yearlyDealCount: ordered.reduce((t, b) => t + (b.months[i]?.yearlyDealCount ?? 0), 0),
   }));
-  const grandActual = ordered.reduce((t, b) => t + totalsOf(b).actual, 0);
-  const grandQuota = ordered.reduce((t, b) => t + totalsOf(b).quota, 0);
+  const grandActual = ordered.reduce((t, b) => t + b.totals.actual, 0);
+  const grandQuota = ordered.reduce((t, b) => t + b.totals.quota, 0);
+  const grandDealCount = ordered.reduce((t, b) => t + b.totals.dealCount, 0);
+  const grandYearlyActual = ordered.reduce((t, b) => t + b.totals.yearlyActual, 0);
+  const grandYearlyDealCount = ordered.reduce((t, b) => t + b.totals.yearlyDealCount, 0);
+
+  const singleMetric = visible.size === 1;
+  const visibleRows = METRIC_ORDER.filter((m) => visible.has(m) && AVAILABLE.includes(m));
 
   return (
-    <div className="overflow-x-auto -mx-2">
-      <table className="text-sm w-full">
-        <thead>
-          <tr className="text-xs uppercase tracking-wide text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
-            <th className="text-left py-2 pr-4 font-medium sticky left-0 bg-white dark:bg-zinc-950 z-10">
-              {dim.name}
-            </th>
-            <th className="text-left py-2 pr-4 font-medium sticky left-0 bg-white dark:bg-zinc-950 z-10">
-              Metric
-            </th>
-            {months.map((m) => (
-              <th key={m.month} className="text-right py-2 px-3 font-medium whitespace-nowrap">
-                {fmtMonthShort(m.month)}
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-zinc-500">Show:</span>
+        {AVAILABLE.map((m) => {
+          const on = visible.has(m);
+          return (
+            <button
+              key={m}
+              onClick={() => toggle(m)}
+              className={`px-2 py-0.5 rounded-md border transition ${
+                on
+                  ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                  : "border-zinc-300 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              }`}
+            >
+              {METRIC_LABEL[m]}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="overflow-x-auto -mx-2">
+        <table className="text-sm w-full">
+          <thead>
+            <tr className="text-xs uppercase tracking-wide text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
+              <th className="text-left py-2 pr-4 font-medium sticky left-0 bg-white dark:bg-zinc-950 z-10">
+                {dim.name}
               </th>
-            ))}
-            <th className="text-right py-2 pl-4 pr-2 font-medium whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800">
-              Total
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {ordered.map((b, bi) => {
-            const isUnassigned = b.id === "__unassigned__";
-            const showQuotas = dim.quotasAvailable;
-            const rowCount = showQuotas ? 3 : 1;
-            const t = totalsOf(b);
-            const totalAtt = t.quota > 0 ? t.actual / t.quota : null;
-            return (
+              {!singleMetric && (
+                <th className="text-left py-2 pr-4 font-medium sticky left-0 bg-white dark:bg-zinc-950 z-10">
+                  Metric
+                </th>
+              )}
+              {months.map((m) => (
+                <th key={m.month} className="text-right py-2 px-3 font-medium whitespace-nowrap">
+                  {fmtMonthShort(m.month)}
+                </th>
+              ))}
+              <th className="text-right py-2 pl-4 pr-2 font-medium whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800">
+                Total
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordered.map((b, bi) => (
               <BucketBlock
                 key={String(b.id)}
                 bucket={b}
-                months={months}
-                rowCount={rowCount}
-                showQuotas={showQuotas}
-                isUnassigned={isUnassigned}
+                isUnassigned={b.id === "__unassigned__"}
                 isFirst={bi === 0}
-                totalAtt={totalAtt}
+                visibleMetrics={visibleRows}
+                singleMetric={singleMetric}
                 onDrillMonth={onDrillMonth}
               />
-            );
-          })}
-        </tbody>
-        <tfoot>
-          <tr className="border-t-2 border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40">
-            <td className="py-2 pr-4 sticky left-0 bg-zinc-50 dark:bg-zinc-900/40 z-10 font-semibold" colSpan={2}>
-              Total — Actuals
-            </td>
-            {monthTotals.map((m) => (
-              <td key={m.month} className="py-2 px-3 text-right font-mono whitespace-nowrap font-semibold">
-                {m.actual > 0 ? fmtMoneyFull(m.actual) : <span className="text-zinc-400">—</span>}
-              </td>
             ))}
-            <td className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-bold">
-              {fmtMoneyFull(grandActual)}
-            </td>
-          </tr>
-          {dim.quotasAvailable && (
-            <>
-              <tr className="bg-zinc-50 dark:bg-zinc-900/40">
-                <td className="py-2 pr-4 sticky left-0 bg-zinc-50 dark:bg-zinc-900/40 z-10 font-semibold" colSpan={2}>
-                  Total — Quotas
-                </td>
-                {monthTotals.map((m) => (
-                  <td key={m.month} className="py-2 px-3 text-right font-mono whitespace-nowrap font-semibold">
-                    {m.quota > 0 ? fmtMoneyFull(m.quota) : <span className="text-zinc-400">—</span>}
-                  </td>
-                ))}
-                <td className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-bold">
-                  {fmtMoneyFull(grandQuota)}
-                </td>
-              </tr>
-              <tr className="bg-zinc-50 dark:bg-zinc-900/40">
-                <td className="py-2 pr-4 sticky left-0 bg-zinc-50 dark:bg-zinc-900/40 z-10 font-semibold" colSpan={2}>
-                  Total — Attainment
-                </td>
-                {monthTotals.map((m) => {
-                  const att = m.quota > 0 ? m.actual / m.quota : null;
-                  return (
-                    <td
-                      key={m.month}
-                      className={`py-2 px-3 text-right font-mono whitespace-nowrap font-semibold ${attainmentClass(att)}`}
-                    >
-                      {fmtPct(att)}
-                    </td>
-                  );
-                })}
-                <td
-                  className={`py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-bold ${attainmentClass(
-                    grandQuota > 0 ? grandActual / grandQuota : null
-                  )}`}
+          </tbody>
+          <tfoot>
+            {visibleRows.map((metric, idx) => {
+              const firstRow = idx === 0;
+              const labelCls =
+                "py-2 pr-4 sticky left-0 bg-zinc-50 dark:bg-zinc-900/40 z-10 font-semibold";
+              const cellBase =
+                "py-2 px-3 text-right font-mono whitespace-nowrap font-semibold";
+              const totalBase =
+                "py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-bold";
+              return (
+                <tr
+                  key={metric}
+                  className={`bg-zinc-50 dark:bg-zinc-900/40 ${
+                    firstRow ? "border-t-2 border-zinc-300 dark:border-zinc-700" : ""
+                  }`}
                 >
-                  {fmtPct(grandQuota > 0 ? grandActual / grandQuota : null)}
-                </td>
-              </tr>
-            </>
-          )}
-        </tfoot>
-      </table>
+                  <td className={labelCls} colSpan={singleMetric ? 1 : 2}>
+                    {singleMetric ? "Total" : `Total — ${METRIC_LABEL[metric]}`}
+                  </td>
+                  {monthTotals.map((m) => {
+                    if (metric === "actuals")
+                      return (
+                        <td key={m.month} className={cellBase}>
+                          {m.actual > 0 ? fmtMoneyFull(m.actual) : <span className="text-zinc-400">—</span>}
+                        </td>
+                      );
+                    if (metric === "quotas")
+                      return (
+                        <td key={m.month} className={cellBase}>
+                          {m.quota > 0 ? fmtMoneyFull(m.quota) : <span className="text-zinc-400">—</span>}
+                        </td>
+                      );
+                    if (metric === "attainment") {
+                      const a = m.quota > 0 ? m.actual / m.quota : null;
+                      return (
+                        <td key={m.month} className={`${cellBase} ${attainmentClass(a)}`}>
+                          {fmtPct(a)}
+                        </td>
+                      );
+                    }
+                    if (metric === "yearlyDeals") {
+                      const r = m.dealCount > 0 ? m.yearlyDealCount / m.dealCount : null;
+                      return (
+                        <td key={m.month} className={`${cellBase} text-zinc-600 dark:text-zinc-300`}>
+                          {fmtPct(r)}
+                        </td>
+                      );
+                    }
+                    const r = m.actual > 0 ? m.yearlyActual / m.actual : null;
+                    return (
+                      <td key={m.month} className={`${cellBase} text-zinc-600 dark:text-zinc-300`}>
+                        {fmtPct(r)}
+                      </td>
+                    );
+                  })}
+                  {(() => {
+                    if (metric === "actuals")
+                      return <td className={totalBase}>{fmtMoneyFull(grandActual)}</td>;
+                    if (metric === "quotas")
+                      return <td className={totalBase}>{fmtMoneyFull(grandQuota)}</td>;
+                    if (metric === "attainment") {
+                      const a = grandQuota > 0 ? grandActual / grandQuota : null;
+                      return <td className={`${totalBase} ${attainmentClass(a)}`}>{fmtPct(a)}</td>;
+                    }
+                    if (metric === "yearlyDeals") {
+                      const r = grandDealCount > 0 ? grandYearlyDealCount / grandDealCount : null;
+                      return (
+                        <td className={`${totalBase} text-zinc-700 dark:text-zinc-200`}>{fmtPct(r)}</td>
+                      );
+                    }
+                    const r = grandActual > 0 ? grandYearlyActual / grandActual : null;
+                    return (
+                      <td className={`${totalBase} text-zinc-700 dark:text-zinc-200`}>{fmtPct(r)}</td>
+                    );
+                  })()}
+                </tr>
+              );
+            })}
+          </tfoot>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1237,102 +1337,157 @@ function totalsOf(b: DimensionBucketRow): { actual: number; quota: number } {
 
 function BucketBlock({
   bucket,
-  months,
-  rowCount,
-  showQuotas,
   isUnassigned,
   isFirst,
-  totalAtt,
+  visibleMetrics,
+  singleMetric,
   onDrillMonth,
 }: {
   bucket: DimensionBucketRow;
-  months: Month[];
-  rowCount: number;
-  showQuotas: boolean;
   isUnassigned: boolean;
   isFirst: boolean;
-  totalAtt: number | null;
+  visibleMetrics: IndividualMetric[];
+  singleMetric: boolean;
   onDrillMonth?: (month: string, bucket: { id: number | "__unassigned__"; name: string }) => void;
 }) {
   const labelCellClass = `py-2 pr-4 sticky left-0 bg-white dark:bg-zinc-950 z-10 whitespace-nowrap ${
     isUnassigned ? "italic text-zinc-500" : "font-medium"
   }`;
   const groupBorder = isFirst ? "" : "border-t-2 border-zinc-200 dark:border-zinc-800";
+  const rowCount = visibleMetrics.length;
+  const totalAtt =
+    bucket.totals.quota > 0 ? bucket.totals.actual / bucket.totals.quota : null;
+  const cellBase = "py-2 px-3 text-right font-mono whitespace-nowrap";
+  const totalBase =
+    "py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold";
+  const dash = <span className="text-zinc-400">—</span>;
 
   return (
     <>
-      {/* Actuals row (also carries the bucket label as rowSpan=N) */}
-      <tr className={`border-b border-zinc-100 dark:border-zinc-800/50 ${groupBorder}`}>
-        <td rowSpan={rowCount} className={labelCellClass}>
-          {bucket.name}
-        </td>
-        <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">Actuals</td>
-        {bucket.months.map((m) => {
-          const actual = m?.actual ?? 0;
-          const clickable = onDrillMonth && actual > 0;
-          return (
-            <td
-              key={m?.month ?? Math.random()}
-              onClick={clickable ? () => onDrillMonth(m.month, { id: bucket.id, name: bucket.name }) : undefined}
-              className={`py-2 px-3 text-right font-mono whitespace-nowrap ${
-                clickable
-                  ? "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:underline decoration-dotted"
-                  : ""
-              }`}
-            >
-              {actual > 0 ? fmtMoneyFull(actual) : <span className="text-zinc-400">—</span>}
-            </td>
-          );
-        })}
-        <td className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold">
-          {totalsOf(bucket).actual > 0
-            ? fmtMoneyFull(totalsOf(bucket).actual)
-            : <span className="text-zinc-400">—</span>}
-        </td>
-      </tr>
-      {showQuotas && (
-        <>
-          <tr className="border-b border-zinc-100 dark:border-zinc-800/50">
-            <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">Quotas</td>
+      {visibleMetrics.map((metric, idx) => {
+        const firstRow = idx === 0;
+        return (
+          <tr
+            key={metric}
+            className={`border-b border-zinc-100 dark:border-zinc-800/50 ${
+              firstRow ? groupBorder : ""
+            }`}
+          >
+            {firstRow && (
+              <td rowSpan={rowCount} className={labelCellClass}>
+                {bucket.name}
+              </td>
+            )}
+            {!singleMetric && (
+              <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
+                {METRIC_LABEL[metric]}
+              </td>
+            )}
             {bucket.months.map((m) => {
-              const q = m?.quota ?? 0;
-              return (
-                <td key={m?.month ?? Math.random()} className="py-2 px-3 text-right font-mono whitespace-nowrap">
-                  {q > 0 ? fmtMoneyFull(q) : <span className="text-zinc-400">—</span>}
-                </td>
-              );
-            })}
-            <td className="py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold">
-              {totalsOf(bucket).quota > 0
-                ? fmtMoneyFull(totalsOf(bucket).quota)
-                : <span className="text-zinc-400">—</span>}
-            </td>
-          </tr>
-          <tr className="border-b border-zinc-100 dark:border-zinc-800/50">
-            <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">Attainment</td>
-            {bucket.months.map((m) => {
-              const q = m?.quota ?? 0;
-              const ac = m?.actual ?? 0;
-              const a = q > 0 ? ac / q : null;
+              if (metric === "actuals") {
+                const clickable = onDrillMonth && m.actual > 0;
+                return (
+                  <td
+                    key={m.month}
+                    onClick={
+                      clickable
+                        ? () => onDrillMonth!(m.month, { id: bucket.id, name: bucket.name })
+                        : undefined
+                    }
+                    className={`${cellBase} ${
+                      clickable
+                        ? "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:underline decoration-dotted"
+                        : ""
+                    }`}
+                  >
+                    {m.actual > 0 ? fmtMoneyFull(m.actual) : dash}
+                  </td>
+                );
+              }
+              if (metric === "quotas")
+                return (
+                  <td key={m.month} className={cellBase}>
+                    {m.quota > 0 ? fmtMoneyFull(m.quota) : dash}
+                  </td>
+                );
+              if (metric === "attainment") {
+                const a = m.quota > 0 ? m.actual / m.quota : null;
+                return (
+                  <td key={m.month} className={`${cellBase} ${attainmentClass(a)}`}>
+                    {fmtPct(a)}
+                  </td>
+                );
+              }
+              if (metric === "yearlyDeals") {
+                const r = m.dealCount > 0 ? m.yearlyDealCount / m.dealCount : null;
+                return (
+                  <td
+                    key={m.month}
+                    className={`${cellBase} text-zinc-600 dark:text-zinc-300`}
+                    title={
+                      m.dealCount > 0
+                        ? `${m.yearlyDealCount} of ${m.dealCount} deals Yearly/Multiyears`
+                        : undefined
+                    }
+                  >
+                    {fmtPct(r)}
+                  </td>
+                );
+              }
+              const r = m.actual > 0 ? m.yearlyActual / m.actual : null;
               return (
                 <td
-                  key={m?.month ?? Math.random()}
-                  className={`py-2 px-3 text-right font-mono whitespace-nowrap ${attainmentClass(a)}`}
+                  key={m.month}
+                  className={`${cellBase} text-zinc-600 dark:text-zinc-300`}
+                  title={
+                    m.actual > 0
+                      ? `${fmtMoneyFull(m.yearlyActual)} of ${fmtMoneyFull(m.actual)} MRR`
+                      : undefined
+                  }
                 >
-                  {fmtPct(a)}
+                  {fmtPct(r)}
                 </td>
               );
             })}
-            <td
-              className={`py-2 pl-4 pr-2 text-right font-mono whitespace-nowrap border-l border-zinc-200 dark:border-zinc-800 font-semibold ${attainmentClass(
-                totalAtt
-              )}`}
-            >
-              {fmtPct(totalAtt)}
-            </td>
+            {(() => {
+              if (metric === "actuals")
+                return (
+                  <td className={totalBase}>
+                    {bucket.totals.actual > 0 ? fmtMoneyFull(bucket.totals.actual) : dash}
+                  </td>
+                );
+              if (metric === "quotas")
+                return (
+                  <td className={totalBase}>
+                    {bucket.totals.quota > 0 ? fmtMoneyFull(bucket.totals.quota) : dash}
+                  </td>
+                );
+              if (metric === "attainment")
+                return (
+                  <td className={`${totalBase} ${attainmentClass(totalAtt)}`}>
+                    {fmtPct(totalAtt)}
+                  </td>
+                );
+              if (metric === "yearlyDeals") {
+                const r =
+                  bucket.totals.dealCount > 0
+                    ? bucket.totals.yearlyDealCount / bucket.totals.dealCount
+                    : null;
+                return (
+                  <td className={`${totalBase} text-zinc-700 dark:text-zinc-200`}>{fmtPct(r)}</td>
+                );
+              }
+              const r =
+                bucket.totals.actual > 0
+                  ? bucket.totals.yearlyActual / bucket.totals.actual
+                  : null;
+              return (
+                <td className={`${totalBase} text-zinc-700 dark:text-zinc-200`}>{fmtPct(r)}</td>
+              );
+            })()}
           </tr>
-        </>
-      )}
+        );
+      })}
     </>
   );
 }
